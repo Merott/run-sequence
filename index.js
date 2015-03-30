@@ -3,6 +3,7 @@
 "use strict";
 
 var colors = require('chalk');
+var callbacks = {};
 
 function verifyTaskSets(gulp, taskSets, skipArrays) {
 	if(taskSets.length === 0) {
@@ -42,6 +43,7 @@ function runSequence(gulp) {
 		currentTaskSet,
 
 		finish = function(err) {
+			gulp.removeListener('task_start', onTaskStart);
 			gulp.removeListener('task_stop', onTaskEnd);
 			gulp.removeListener('task_err', onError);
 			if(callBack) {
@@ -52,9 +54,44 @@ function runSequence(gulp) {
 		},
 
 		onError = function(err) {
+			var end = (callbacks['task_err'] || []).some(function(callback) {
+				var result = callback(err);
+				if(result === false) {
+					finish();
+					return true;   // short-circuit the some() loop
+				}
+			});
+
+			if(end) {
+				return;
+			}
+
 			finish(err);
 		},
+
+		onTaskStart = function(event) {
+			(callbacks['task_start'] || []).some(function(callback) {
+				var result = callback(event);
+				if(result === false) {
+					finish();
+					return true;   // short-circuit the some() loop
+				}
+			});
+		},
+
 		onTaskEnd = function(event) {
+			var end = (callbacks['task_stop'] || []).some(function(callback) {
+				var result = callback(event);
+				if(result === false) {
+					finish();
+					return true;   // short-circuit the some() loop
+				}
+			});
+
+			if(end) {
+				return;
+			}
+
 			var idx = currentTaskSet.indexOf(event.task);
 			if(idx > -1) {
 				currentTaskSet.splice(idx,1);
@@ -79,6 +116,7 @@ function runSequence(gulp) {
 
 	verifyTaskSets(gulp, taskSets);
 
+	gulp.on('task_start', onTaskStart);
 	gulp.on('task_stop', onTaskEnd);
 	gulp.on('task_err', onError);
 
@@ -88,4 +126,11 @@ function runSequence(gulp) {
 module.exports = runSequence.bind(null, require('gulp'));
 module.exports.use = function(gulp) {
 	return runSequence.bind(null, gulp);
+};
+module.exports.on = function(event, callback) {
+	callbacks[event] = callbacks[event] || [];
+	callbacks[event].push(callback);
+	return function () {
+		callbacks[event].splice(callbacks[event].indexOf(callback), 1);
+	};
 };
